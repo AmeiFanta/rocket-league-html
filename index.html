@@ -1,1 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neon Rocket Arena</title>
+  <style>
+    :root {
+      --bg: #02030a;
+      --grid: rgba(20, 180, 255, 0.12);
+      --cyan: #00e7ff;
+      --magenta: #ff29ff;
+      --lime: #66ff8f;
+      --text: #d8f4ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 40%, #081530 0%, #03050c 62%, #010206 100%);
+      color: var(--text);
+      font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    #gameCanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: auto;
+    }
+    .hud {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      pointer-events: none;
+      text-shadow: 0 0 10px rgba(0, 240, 255, 0.6);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      user-select: none;
+    }
+    .panel {
+      min-width: 94px;
+      text-align: center;
+      padding: 8px 12px;
+      border: 1px solid rgba(0, 220, 255, 0.45);
+      background: rgba(2, 12, 24, 0.7);
+      box-shadow: inset 0 0 16px rgba(0, 220, 255, 0.16), 0 0 16px rgba(0, 220, 255, 0.2);
+      border-radius: 8px;
+      font-size: 22px;
+    }
+    .timer { font-size: 28px; min-width: 130px; }
+    .boost-ui {
+      position: fixed;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(440px, 80vw);
+      pointer-events: none;
+    }
+    .boost-label {
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: #c9f5ff;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      text-align: center;
+    }
+    .boost-bar {
+      height: 16px;
+      border: 1px solid rgba(0, 230, 255, 0.55);
+      border-radius: 999px;
+      background: rgba(0, 10, 24, 0.85);
+      overflow: hidden;
+      box-shadow: inset 0 0 8px rgba(0, 224, 255, 0.3), 0 0 12px rgba(0, 224, 255, 0.22);
+    }
+    .boost-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #18e0ff 0%, #57fff6 45%, #92ffaf 100%);
+      box-shadow: 0 0 14px rgba(80, 255, 220, 0.9);
+      transition: width 0.05s linear;
+    }
+    .help {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      font-size: 12px;
+      opacity: 0.82;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      padding: 8px 10px;
+      line-height: 1.45;
+      max-width: 300px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
 
+  <div class="hud">
+    <div class="panel" id="leftScore">0</div>
+    <div class="panel timer" id="timer">03:00</div>
+    <div class="panel" id="rightScore">0</div>
+  </div>
+
+  <div class="boost-ui">
+    <div class="boost-label">Boost</div>
+    <div class="boost-bar"><div id="boostFill" class="boost-fill"></div></div>
+  </div>
+
+  <div class="help">
+    Controls: W/S accelerate & reverse • A/D turn • Space boost • R reset ball
+  </div>
+
+  <script>
+    "use strict";
+
+    // =============================
+    // Constants / Configuration
+    // =============================
+    const CONFIG = {
+      world: { width: 2600, height: 1500 },
+      walls: { thickness: 34, bounce: 0.82 },
+      goal: { width: 300, depth: 145 },
+      car: {
+        width: 68,
+        height: 42,
+        maxSpeed: 760,
+        accel: 920,
+        reverseAccel: 660,
+        turnRate: 3.25,
+        friction: 0.985,
+        drag: 0.00052,
+        hitPower: 1.05,
+        bounce: 0.08
+      },
+      ai: {
+        maxSpeed: 680,
+        accel: 810,
+        reverseAccel: 600,
+        turnRate: 2.95,
+        friction: 0.985,
+        drag: 0.00052,
+        hitPower: 0.95,
+        bounce: 0.08
+      },
+      ball: {
+        radius: 30,
+        maxSpeed: 1080,
+        friction: 0.997,
+        bounce: 0.9
+      },
+      boost: {
+        max: 100,
+        force: 980,
+        costPerSecond: 34,
+        regenPerSecond: 16
+      },
+      matchDuration: 180,
+      kickoffPause: 1.0
+    };
+
+    const COLORS = {
+      arenaGlow: "#00dbff",
+      fieldLine: "rgba(130, 235, 255, 0.86)",
+      centerRing: "rgba(255, 255, 255, 0.28)",
+      goalBlue: "rgba(0, 221, 255, 0.75)",
+      goalPink: "rgba(255, 62, 255, 0.75)",
+      ball: "#fff5cc",
+      ballGlow: "rgba(255, 244, 163, 0.75)",
+      player: "#46f4ff",
+      ai: "#ff5bff",
+      shadow: "rgba(0, 0, 0, 0.28)"
+    };
+
+    // =============================
+    // Utility / Physics helpers
+    // =============================
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const length = (x, y) => Math.hypot(x, y);
+
+    function normalize(x, y) {
+      const len = Math.hypot(x, y) || 1;
+      return { x: x / len, y: y / len };
+    }
+
+    function circleIntersectsRect(circleX, circleY, radius, rect) {
+      const nx = clamp(circleX, rect.x, rect.x + rect.w);
+      const ny = clamp(circleY, rect.y, rect.y + rect.h);
+      const dx = circleX - nx;
+      const dy = circleY - ny;
+      return dx * dx + dy * dy <= radius * radius;
+    }
+
+    // =============================
+    // Core entities
+    // =============================
+    class Car {
+      constructor(x, y, angle, isPlayer = false) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.angle = angle;
+        this.isPlayer = isPlayer;
+        this.width = CONFIG.car.width;
+        this.height = CONFIG.car.height;
+        this.boost = CONFIG.boost.max;
+        this.particles = [];
+      }
+
+      get forwardX() { return Math.cos(this.angle); }
+      get forwardY() { return Math.sin(this.angle); }
+
+      applyInput(input, dt, settings) {
+        const turning = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+        this.angle += turning * settings.turnRate * dt;
+
+        let throttle = 0;
+        if (input.forward) throttle += 1;
+        if (input.back) throttle -= 1;
+
+        const accelAmount = throttle >= 0 ? settings.accel : settings.reverseAccel;
+        this.vx += this.forwardX * throttle * accelAmount * dt;
+        this.vy += this.forwardY * throttle * accelAmount * dt;
+
+        // Boost system + particles.
+        if (input.boost && throttle > 0 && this.boost > 0.5) {
+          const boostImpulse = CONFIG.boost.force * dt;
+          this.vx += this.forwardX * boostImpulse;
+          this.vy += this.forwardY * boostImpulse;
+          this.boost = Math.max(0, this.boost - CONFIG.boost.costPerSecond * dt);
+          this.spawnBoostParticles();
+        } else {
+          this.boost = Math.min(CONFIG.boost.max, this.boost + CONFIG.boost.regenPerSecond * dt);
+        }
+
+        // Friction and aerodynamic drag.
+        this.vx *= settings.friction;
+        this.vy *= settings.friction;
+        const speed = length(this.vx, this.vy);
+        const dragFactor = Math.max(0, 1 - settings.drag * speed);
+        this.vx *= dragFactor;
+        this.vy *= dragFactor;
+
+        // Max speed clamp.
+        const maxSpeed = settings.maxSpeed;
+        if (speed > maxSpeed) {
+          const n = normalize(this.vx, this.vy);
+          this.vx = n.x * maxSpeed;
+          this.vy = n.y * maxSpeed;
+        }
+
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        this.resolveWallCollision();
+        this.updateParticles(dt);
+      }
+
+      spawnBoostParticles() {
+        const exhaustX = this.x - this.forwardX * (this.width * 0.45);
+        const exhaustY = this.y - this.forwardY * (this.height * 0.45);
+        for (let i = 0; i < 2; i++) {
+          const spread = (Math.random() - 0.5) * 0.8;
+          const dirX = -this.forwardX + spread * this.forwardY;
+          const dirY = -this.forwardY - spread * this.forwardX;
+          const pSpeed = 120 + Math.random() * 180;
+          this.particles.push({
+            x: exhaustX,
+            y: exhaustY,
+            vx: dirX * pSpeed,
+            vy: dirY * pSpeed,
+            life: 0.35 + Math.random() * 0.22,
+            age: 0,
+            size: 4 + Math.random() * 5
+          });
+        }
+      }
+
+      updateParticles(dt) {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+          const p = this.particles[i];
+          p.age += dt;
+          if (p.age >= p.life) {
+            this.particles.splice(i, 1);
+            continue;
+          }
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vx *= 0.95;
+          p.vy *= 0.95;
+        }
+      }
+
+      resolveWallCollision() {
+        const halfW = this.width * 0.5;
+        const halfH = this.height * 0.5;
+        const minX = CONFIG.walls.thickness + halfW;
+        const maxX = CONFIG.world.width - CONFIG.walls.thickness - halfW;
+        const minY = CONFIG.walls.thickness + halfH;
+        const maxY = CONFIG.world.height - CONFIG.walls.thickness - halfH;
+
+        if (this.x < minX) { this.x = minX; this.vx *= -CONFIG.car.bounce; }
+        if (this.x > maxX) { this.x = maxX; this.vx *= -CONFIG.car.bounce; }
+        if (this.y < minY) { this.y = minY; this.vy *= -CONFIG.car.bounce; }
+        if (this.y > maxY) { this.y = maxY; this.vy *= -CONFIG.car.bounce; }
+      }
+    }
+
+    class Ball {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.r = CONFIG.ball.radius;
+      }
+
+      update(dt, inGoalLane) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        this.vx *= CONFIG.ball.friction;
+        this.vy *= CONFIG.ball.friction;
+
+        const speed = length(this.vx, this.vy);
+        if (speed > CONFIG.ball.maxSpeed) {
+          const n = normalize(this.vx, this.vy);
+          this.vx = n.x * CONFIG.ball.maxSpeed;
+          this.vy = n.y * CONFIG.ball.maxSpeed;
+        }
+
+        // Bounce off walls except when inside goal opening lane.
+        const minX = CONFIG.walls.thickness + this.r;
+        const maxX = CONFIG.world.width - CONFIG.walls.thickness - this.r;
+        const minY = CONFIG.walls.thickness + this.r;
+        const maxY = CONFIG.world.height - CONFIG.walls.thickness - this.r;
+
+        if (this.y < minY) { this.y = minY; this.vy *= -CONFIG.ball.bounce; }
+        if (this.y > maxY) { this.y = maxY; this.vy *= -CONFIG.ball.bounce; }
+
+        if (!inGoalLane.left && this.x < minX) { this.x = minX; this.vx *= -CONFIG.ball.bounce; }
+        if (!inGoalLane.right && this.x > maxX) { this.x = maxX; this.vx *= -CONFIG.ball.bounce; }
+      }
+    }
+
+    // =============================
+    // Game State & Systems
+    // =============================
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const leftScoreEl = document.getElementById("leftScore");
+    const rightScoreEl = document.getElementById("rightScore");
+    const timerEl = document.getElementById("timer");
+    const boostFillEl = document.getElementById("boostFill");
+
+    const keys = new Set();
+    const game = {
+      player: null,
+      ai: null,
+      ball: null,
+      scoreLeft: 0,
+      scoreRight: 0,
+      timeLeft: CONFIG.matchDuration,
+      kickoffTimer: 0,
+      lastTime: 0,
+      camera: { x: 0, y: 0 },
+      matchEnded: false,
+      goalRects: {
+        left: {
+          x: 0,
+          y: (CONFIG.world.height - CONFIG.goal.width) * 0.5,
+          w: CONFIG.goal.depth,
+          h: CONFIG.goal.width
+        },
+        right: {
+          x: CONFIG.world.width - CONFIG.goal.depth,
+          y: (CONFIG.world.height - CONFIG.goal.width) * 0.5,
+          w: CONFIG.goal.depth,
+          h: CONFIG.goal.width
+        }
+      }
+    };
+
+    function resizeCanvas() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerHeight + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function resetKickoff() {
+      game.player.x = CONFIG.world.width * 0.25;
+      game.player.y = CONFIG.world.height * 0.5;
+      game.player.vx = game.player.vy = 0;
+      game.player.angle = 0;
+
+      game.ai.x = CONFIG.world.width * 0.75;
+      game.ai.y = CONFIG.world.height * 0.5;
+      game.ai.vx = game.ai.vy = 0;
+      game.ai.angle = Math.PI;
+
+      game.ball.x = CONFIG.world.width * 0.5;
+      game.ball.y = CONFIG.world.height * 0.5;
+      game.ball.vx = game.ball.vy = 0;
+
+      game.kickoffTimer = CONFIG.kickoffPause;
+    }
+
+    function resetBallOnly() {
+      game.ball.x = CONFIG.world.width * 0.5;
+      game.ball.y = CONFIG.world.height * 0.5;
+      game.ball.vx = 0;
+      game.ball.vy = 0;
+    }
+
+    function init() {
+      game.player = new Car(CONFIG.world.width * 0.25, CONFIG.world.height * 0.5, 0, true);
+      game.ai = new Car(CONFIG.world.width * 0.75, CONFIG.world.height * 0.5, Math.PI, false);
+      game.ball = new Ball(CONFIG.world.width * 0.5, CONFIG.world.height * 0.5);
+      resetKickoff();
+    }
+
+    function getPlayerInput() {
+      return {
+        forward: keys.has("KeyW"),
+        back: keys.has("KeyS"),
+        left: keys.has("KeyA"),
+        right: keys.has("KeyD"),
+        boost: keys.has("Space")
+      };
+    }
+
+    // Simple opponent AI: rotates to the ball and drives with boost occasionally.
+    function getAIInput() {
+      const dx = game.ball.x - game.ai.x;
+      const dy = game.ball.y - game.ai.y;
+      const desired = Math.atan2(dy, dx);
+      let diff = desired - game.ai.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+
+      const distance = Math.hypot(dx, dy);
+      const facing = Math.cos(diff);
+      return {
+        forward: facing > -0.2,
+        back: facing < -0.55,
+        left: diff < -0.06,
+        right: diff > 0.06,
+        boost: distance > 240 && Math.abs(diff) < 0.32 && game.ai.boost > 15
+      };
+    }
+
+    function resolveCarBallCollision(car, carStats) {
+      const dx = game.ball.x - car.x;
+      const dy = game.ball.y - car.y;
+      const carRadius = Math.max(car.width, car.height) * 0.52;
+      const minDist = game.ball.r + carRadius;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < minDist && dist > 0.0001) {
+        const n = { x: dx / dist, y: dy / dist };
+        const overlap = minDist - dist;
+
+        game.ball.x += n.x * overlap;
+        game.ball.y += n.y * overlap;
+
+        const relVelX = game.ball.vx - car.vx;
+        const relVelY = game.ball.vy - car.vy;
+        const relAlongNormal = relVelX * n.x + relVelY * n.y;
+
+        const hitSpeed = Math.max(0, -relAlongNormal);
+        const impulse = (hitSpeed + length(car.vx, car.vy) * 0.32 + 140) * carStats.hitPower;
+
+        game.ball.vx += n.x * impulse;
+        game.ball.vy += n.y * impulse;
+
+        // Mild recoil to car.
+        car.vx -= n.x * impulse * 0.06;
+        car.vy -= n.y * impulse * 0.06;
+      }
+    }
+
+    function resolveCarCarCollision() {
+      const a = game.player;
+      const b = game.ai;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const minDist = Math.max(a.width, a.height) * 0.55 + Math.max(b.width, b.height) * 0.55;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < minDist && dist > 0.0001) {
+        const n = { x: dx / dist, y: dy / dist };
+        const overlap = minDist - dist;
+        a.x -= n.x * overlap * 0.5;
+        a.y -= n.y * overlap * 0.5;
+        b.x += n.x * overlap * 0.5;
+        b.y += n.y * overlap * 0.5;
+
+        const relVelX = b.vx - a.vx;
+        const relVelY = b.vy - a.vy;
+        const rel = relVelX * n.x + relVelY * n.y;
+        if (rel < 0) {
+          const j = -rel * 0.55;
+          a.vx -= n.x * j;
+          a.vy -= n.y * j;
+          b.vx += n.x * j;
+          b.vy += n.y * j;
+        }
+      }
+    }
+
+    function checkGoal() {
+      const b = game.ball;
+      if (circleIntersectsRect(b.x, b.y, b.r, game.goalRects.left)) {
+        game.scoreRight += 1;
+        resetKickoff();
+      } else if (circleIntersectsRect(b.x, b.y, b.r, game.goalRects.right)) {
+        game.scoreLeft += 1;
+        resetKickoff();
+      }
+    }
+
+    function updateUI() {
+      leftScoreEl.textContent = String(game.scoreLeft);
+      rightScoreEl.textContent = String(game.scoreRight);
+
+      const t = Math.max(0, game.timeLeft);
+      const min = Math.floor(t / 60);
+      const sec = Math.floor(t % 60);
+      timerEl.textContent = `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+
+      boostFillEl.style.width = `${(game.player.boost / CONFIG.boost.max) * 100}%`;
+    }
+
+    // =============================
+    // Rendering
+    // =============================
+    function drawNeonGrid() {
+      const spacing = 90;
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(35, 160, 220, 0.12)";
+      for (let x = 0; x <= CONFIG.world.width; x += spacing) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, CONFIG.world.height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= CONFIG.world.height; y += spacing) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(CONFIG.world.width, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawArena() {
+      // Arena floor.
+      const floorGrad = ctx.createLinearGradient(0, 0, 0, CONFIG.world.height);
+      floorGrad.addColorStop(0, "#061329");
+      floorGrad.addColorStop(1, "#040913");
+      ctx.fillStyle = floorGrad;
+      ctx.fillRect(0, 0, CONFIG.world.width, CONFIG.world.height);
+
+      drawNeonGrid();
+
+      // Soccer lines.
+      ctx.save();
+      ctx.strokeStyle = COLORS.fieldLine;
+      ctx.lineWidth = 5;
+      ctx.strokeRect(150, 100, CONFIG.world.width - 300, CONFIG.world.height - 200);
+      ctx.beginPath();
+      ctx.moveTo(CONFIG.world.width * 0.5, 100);
+      ctx.lineTo(CONFIG.world.width * 0.5, CONFIG.world.height - 100);
+      ctx.stroke();
+
+      ctx.strokeStyle = COLORS.centerRing;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(CONFIG.world.width * 0.5, CONFIG.world.height * 0.5, 160, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Goals.
+      const lg = game.goalRects.left;
+      const rg = game.goalRects.right;
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 230, 255, 0.16)";
+      ctx.fillRect(lg.x, lg.y, lg.w, lg.h);
+      ctx.fillStyle = "rgba(255, 62, 255, 0.16)";
+      ctx.fillRect(rg.x, rg.y, rg.w, rg.h);
+
+      ctx.shadowBlur = 26;
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = COLORS.goalBlue;
+      ctx.shadowColor = COLORS.goalBlue;
+      ctx.strokeRect(lg.x + 2, lg.y + 2, lg.w - 4, lg.h - 4);
+      ctx.strokeStyle = COLORS.goalPink;
+      ctx.shadowColor = COLORS.goalPink;
+      ctx.strokeRect(rg.x + 2, rg.y + 2, rg.w - 4, rg.h - 4);
+      ctx.restore();
+
+      // Outer glowing walls.
+      ctx.save();
+      ctx.lineWidth = CONFIG.walls.thickness;
+      ctx.strokeStyle = "rgba(0, 214, 255, 0.26)";
+      ctx.shadowBlur = 30;
+      ctx.shadowColor = COLORS.arenaGlow;
+
+      ctx.beginPath();
+      ctx.rect(
+        CONFIG.walls.thickness * 0.5,
+        CONFIG.walls.thickness * 0.5,
+        CONFIG.world.width - CONFIG.walls.thickness,
+        CONFIG.world.height - CONFIG.walls.thickness
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawCar(car, color) {
+      ctx.save();
+      ctx.translate(car.x, car.y);
+      ctx.rotate(car.angle);
+
+      // Car shadow.
+      ctx.fillStyle = COLORS.shadow;
+      ctx.fillRect(-car.width * 0.5 + 4, -car.height * 0.5 + 6, car.width, car.height);
+
+      // Body glow.
+      ctx.shadowBlur = 24;
+      ctx.shadowColor = color;
+      ctx.fillStyle = color;
+      ctx.fillRect(-car.width * 0.5, -car.height * 0.5, car.width, car.height);
+
+      // Cockpit and nose indicator.
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(8, 20, 38, 0.92)";
+      ctx.fillRect(-car.width * 0.2, -car.height * 0.3, car.width * 0.45, car.height * 0.6);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+      ctx.beginPath();
+      ctx.moveTo(car.width * 0.45, 0);
+      ctx.lineTo(car.width * 0.22, -7);
+      ctx.lineTo(car.width * 0.22, 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Boost particles.
+      for (const p of car.particles) {
+        const alpha = 1 - p.age / p.life;
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(120, 255, 240, ${alpha * 0.85})`;
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = "rgba(80, 255, 230, 0.8)";
+        ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+    }
+
+    function drawBall() {
+      const b = game.ball;
+      ctx.save();
+      ctx.beginPath();
+      ctx.shadowBlur = 22;
+      ctx.shadowColor = COLORS.ballGlow;
+      ctx.fillStyle = COLORS.ball;
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(40, 40, 50, 0.65)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Camera follow with smoothing.
+      const viewW = window.innerWidth;
+      const viewH = window.innerHeight;
+      const targetX = game.player.x - viewW * 0.35;
+      const targetY = game.player.y - viewH * 0.5;
+      game.camera.x += (targetX - game.camera.x) * 0.12;
+      game.camera.y += (targetY - game.camera.y) * 0.12;
+
+      game.camera.x = clamp(game.camera.x, 0, CONFIG.world.width - viewW);
+      game.camera.y = clamp(game.camera.y, 0, CONFIG.world.height - viewH);
+
+      ctx.save();
+      ctx.translate(-game.camera.x, -game.camera.y);
+
+      drawArena();
+      drawCar(game.player, COLORS.player);
+      drawCar(game.ai, COLORS.ai);
+      drawBall();
+
+      if (game.kickoffTimer > 0) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+        ctx.fillRect(game.camera.x, game.camera.y, viewW, viewH);
+
+        ctx.fillStyle = "rgba(221, 251, 255, 0.92)";
+        ctx.font = "bold 62px Segoe UI, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("KICKOFF", game.camera.x + viewW / 2, game.camera.y + viewH / 2);
+      }
+
+      if (game.matchEnded) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+        ctx.fillRect(game.camera.x, game.camera.y, viewW, viewH);
+        ctx.fillStyle = "rgba(225, 249, 255, 0.95)";
+        ctx.font = "bold 56px Segoe UI, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("MATCH OVER", game.camera.x + viewW / 2, game.camera.y + viewH / 2 - 22);
+        const result = game.scoreLeft === game.scoreRight ? "DRAW" : (game.scoreLeft > game.scoreRight ? "YOU WIN" : "YOU LOSE");
+        ctx.font = "bold 36px Segoe UI, sans-serif";
+        ctx.fillText(result, game.camera.x + viewW / 2, game.camera.y + viewH / 2 + 34);
+      }
+
+      ctx.restore();
+    }
+
+    // =============================
+    // Main game loop
+    // =============================
+    function tick(timestamp) {
+      if (!game.lastTime) game.lastTime = timestamp;
+      const dt = Math.min(0.033, (timestamp - game.lastTime) / 1000);
+      game.lastTime = timestamp;
+
+      if (!game.matchEnded) {
+        game.timeLeft -= dt;
+        if (game.timeLeft <= 0) {
+          game.timeLeft = 0;
+          game.matchEnded = true;
+        }
+
+        if (game.kickoffTimer > 0) {
+          game.kickoffTimer -= dt;
+        } else {
+          const playerInput = getPlayerInput();
+          const aiInput = getAIInput();
+
+          game.player.applyInput(playerInput, dt, CONFIG.car);
+          game.ai.applyInput(aiInput, dt, CONFIG.ai);
+
+          const inGoalLane = {
+            left: game.ball.y > game.goalRects.left.y && game.ball.y < game.goalRects.left.y + game.goalRects.left.h,
+            right: game.ball.y > game.goalRects.right.y && game.ball.y < game.goalRects.right.y + game.goalRects.right.h
+          };
+
+          game.ball.update(dt, inGoalLane);
+
+          resolveCarBallCollision(game.player, CONFIG.car);
+          resolveCarBallCollision(game.ai, CONFIG.ai);
+          resolveCarCarCollision();
+          checkGoal();
+        }
+      }
+
+      updateUI();
+      render();
+      requestAnimationFrame(tick);
+    }
+
+    // =============================
+    // Input handling & bootstrap
+    // =============================
+    window.addEventListener("keydown", (e) => {
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyR"].includes(e.code)) {
+        e.preventDefault();
+      }
+      keys.add(e.code);
+
+      if (e.code === "KeyR") {
+        resetBallOnly();
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      keys.delete(e.code);
+    });
+
+    window.addEventListener("resize", resizeCanvas);
+
+    resizeCanvas();
+    init();
+    updateUI();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
